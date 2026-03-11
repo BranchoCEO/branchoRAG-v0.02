@@ -10,6 +10,7 @@ use walkdir::WalkDir;
 struct FileNode {
     path: String,
     content: String,
+    embedding: Vec<f32>,  // 384-dim vector from sentence-transformers; empty until embed() is called
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,8 +66,29 @@ impl BranchoRAG {
             // read_to_string naturally skips binary files that aren't valid UTF-8
             if let Ok(content) = fs::read_to_string(entry.path()) {
                 seen.insert(path_str.clone());
-                self.data.nodes.push(FileNode { path: path_str, content });
+                self.data.nodes.push(FileNode { path: path_str, content, embedding: Vec::new() });
             }
+        }
+        Ok(())
+    }
+
+    /// Returns all file contents in order so Python can batch-encode them.
+    fn get_contents(&self) -> Vec<String> {
+        self.data.nodes.iter().map(|n| n.content.clone()).collect()
+    }
+
+    /// Accepts the full list of embeddings from Python and writes them back into each node.
+    /// Expects exactly one Vec<f32> per node, in the same order as get_contents() returned them.
+    fn set_embeddings(&mut self, embeddings: Vec<Vec<f32>>) -> PyResult<()> {
+        if embeddings.len() != self.data.nodes.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Expected {} embeddings, got {}",
+                self.data.nodes.len(),
+                embeddings.len()
+            )));
+        }
+        for (node, emb) in self.data.nodes.iter_mut().zip(embeddings.into_iter()) {
+            node.embedding = emb;
         }
         Ok(())
     }
